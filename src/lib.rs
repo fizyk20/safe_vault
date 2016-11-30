@@ -220,7 +220,6 @@ extern crate fs2;
 extern crate log;
 extern crate lru_time_cache;
 extern crate itertools;
-extern crate kademlia_routing_table;
 #[macro_use]
 extern crate maidsafe_utilities;
 extern crate config_file_handler;
@@ -255,3 +254,48 @@ mod vault;
 pub mod mock_crust_detail;
 pub use config_handler::Config;
 pub use vault::Vault;
+
+/// Utilities stolen from the old Kademlia routing table
+pub mod kad {
+    use itertools::Itertools;
+    use routing::{MIN_GROUP_SIZE, RoutingTable, XorName, Xorable};
+    use std::iter;
+
+    // TODO: optimise the below functions. In particular we don't need to allocate a vector big
+    // enough for all names in the table.
+
+    /// Get the `MIN_GROUP_SIZE` nodes closest to `name` within the passed routing table `rt`,
+    /// sorted by distance, increasing.
+    ///
+    /// Length should only be less than `MIN_GROUP_SIZE` when not enough nodes are known by the
+    /// routing table (e.g. during network start-up).
+    pub fn close_group(rt: &RoutingTable<XorName>, name: &XorName) -> Vec<XorName> {
+        let mut v = iter::once(rt.our_name()).chain(rt.iter()).collect_vec();
+        v.sort_by(|l, r| name.cmp_distance(l, r));
+        v.truncate(MIN_GROUP_SIZE);
+        // Convert from &XorName to XorName, now so we don't have to allocate all truncated items.
+        v.into_iter().map(|n| *n).collect_vec()
+    }
+
+    /// Returns `true` if there are fewer than `MIN_GROUP_SIZE` nodes in our routing table that are
+    /// closer to `name` than `rt.our_name()`.
+    ///
+    /// In other words, it returns `true` whenever we cannot rule out that we might be among the
+    /// `MIN_GROUP_SIZE` closest nodes to `name`.
+    pub fn is_close(rt: &RoutingTable<XorName>, name: &XorName) -> bool {
+        close_group(rt, name).contains(rt.our_name())
+    }
+
+    /// Returns the other members of `name`'s close group, or `None` if we are not a member of it.
+    pub fn other_close_nodes(rt: &RoutingTable<XorName>, name: &XorName) -> Option<Vec<XorName>> {
+        let close_group = close_group(rt, name);
+        if close_group.contains(rt.our_name()) {
+            // TODO: optimise
+            Some(close_group.iter()
+                .filter_map(|n| if *n == *rt.our_name() { None } else { Some(*n) })
+                .collect_vec())
+        } else {
+            None
+        }
+    }
+}

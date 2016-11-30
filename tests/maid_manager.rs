@@ -21,7 +21,8 @@
 use itertools::Itertools;
 use rand::Rng;
 use rand::distributions::{IndependentSample, Range};
-use routing::{Data, GROUP_SIZE, ImmutableData, StructuredData, TYPE_TAG_SESSION_PACKET, XorName};
+use routing::{Data, ImmutableData, MIN_GROUP_SIZE, StructuredData, TYPE_TAG_SESSION_PACKET,
+              XorName, Xorable};
 use routing::client_errors::{GetError, MutationError};
 use routing::mock_crust::{self, Network};
 use rust_sodium::crypto::box_;
@@ -134,7 +135,7 @@ fn handle_put_with_account() {
     let count = nodes.iter()
         .filter(|node| node.get_maid_manager_put_count(client.name()).is_some())
         .count();
-    assert!(GROUP_SIZE == count,
+    assert!(MIN_GROUP_SIZE == count,
             "client account {} found on {} nodes",
             count,
             node_count);
@@ -276,7 +277,7 @@ fn maid_manager_account_adding_with_churn() {
             put_count += 1;
         }
         trace!("Churning on {} nodes, iteration {}", nodes.len(), i);
-        if nodes.len() <= GROUP_SIZE + 2 || rng.gen() {
+        if nodes.len() <= MIN_GROUP_SIZE + 2 || rng.gen() {
             let index = Range::new(1, nodes.len()).ind_sample(&mut rng);
             trace!("Adding node with bootstrap node {}.", index);
             test_node::add_node(&network, &mut nodes, index, false);
@@ -296,7 +297,7 @@ fn maid_manager_account_adding_with_churn() {
         trace!("Processed {} events.", event_count);
         let mut sorted_maid_managers = nodes.iter()
             .sorted_by(|left, right| client.name().cmp_distance(&left.name(), &right.name()));
-        sorted_maid_managers.truncate(GROUP_SIZE);
+        sorted_maid_managers.truncate(MIN_GROUP_SIZE);
         let node_count_stats: Vec<(XorName, Option<u64>)> = sorted_maid_managers.into_iter()
             .map(|x| (x.name(), x.get_maid_manager_put_count(client.name())))
             .collect();
@@ -327,7 +328,7 @@ fn maid_manager_account_decrease_with_churn() {
 
     for i in 0..test_utils::iterations() as u64 {
         trace!("Churning on {} nodes, iteration {}", nodes.len(), i);
-        if nodes.len() <= GROUP_SIZE + 2 || rng.gen() {
+        if nodes.len() <= MIN_GROUP_SIZE + 2 || rng.gen() {
             let index = Range::new(1, nodes.len()).ind_sample(&mut rng);
             trace!("Adding node with bootstrap node {}.", index);
             test_node::add_node(&network, &mut nodes, index, false);
@@ -362,7 +363,7 @@ fn maid_manager_account_decrease_with_churn() {
         trace!("Processed {} events.", event_count);
         let mut sorted_maid_managers = nodes.iter()
             .sorted_by(|left, right| client.name().cmp_distance(&left.name(), &right.name()));
-        sorted_maid_managers.truncate(GROUP_SIZE);
+        sorted_maid_managers.truncate(MIN_GROUP_SIZE);
         let node_count_stats: Vec<(XorName, Option<u64>)> = sorted_maid_managers.into_iter()
             .map(|x| (x.name(), x.get_maid_manager_put_count(client.name())))
             .collect();

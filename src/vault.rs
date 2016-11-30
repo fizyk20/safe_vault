@@ -19,13 +19,12 @@
 use cache::Cache;
 use config_handler::{self, Config};
 use error::InternalError;
-use kademlia_routing_table::RoutingTable;
 use personas::data_manager::DataManager;
 #[cfg(feature = "use-mock-crust")]
 use personas::data_manager::IdAndVersion;
 use personas::maid_manager::MaidManager;
 
-use routing::{Authority, Data, NodeBuilder, Request, Response, XorName};
+use routing::{Authority, Data, NodeBuilder, Request, Response, RoutingTable, XorName};
 use rust_sodium;
 use std::env;
 use std::path::Path;
@@ -169,7 +168,7 @@ impl Vault {
     /// Vault routing_table
     #[cfg(feature = "use-mock-crust")]
     pub fn routing_table(&self) -> RoutingTable<XorName> {
-        self._routing_node.routing_table()
+        unwrap!(self._routing_node.routing_table())
     }
 
     fn process_event(&mut self, event: Event) -> Option<bool> {
@@ -193,6 +192,8 @@ impl Vault {
                 ret = Some(true);
                 Ok(())
             }
+            Event::GroupSplit(_prefix) |
+            Event::GroupMerge(_prefix) => Ok(()),
             Event::Connected | Event::Tick => Ok(()),
         } {
             debug!("Failed to handle event: {:?}", error);

@@ -20,10 +20,10 @@ use accumulator::Accumulator;
 use chunk_store::ChunkStore;
 use error::InternalError;
 use itertools::Itertools;
-use kademlia_routing_table::RoutingTable;
+use kad;
 use maidsafe_utilities::{self, serialisation};
-use routing::{AppendWrapper, Authority, Data, DataIdentifier, GROUP_SIZE, MessageId,
-              StructuredData, XorName};
+use routing::{AppendWrapper, Authority, Data, DataIdentifier, MIN_GROUP_SIZE, MessageId,
+              RoutingTable, StructuredData, XorName};
 use routing::client_errors::{GetError, MutationError};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::From;
@@ -36,7 +36,7 @@ use vault::RoutingNode;
 
 const MAX_FULL_PERCENT: u64 = 50;
 /// The quorum for accumulating refresh messages.
-const ACCUMULATOR_QUORUM: usize = GROUP_SIZE / 2 + 1;
+const ACCUMULATOR_QUORUM: usize = MIN_GROUP_SIZE / 2 + 1;
 /// The timeout for accumulating refresh messages.
 const ACCUMULATOR_TIMEOUT_SECS: u64 = 180;
 /// The timeout for cached data from requests; if no consensus is reached, the data is dropped.
@@ -164,7 +164,7 @@ impl Cache {
     fn prune_unneeded_chunks(&mut self, routing_table: &RoutingTable<XorName>) -> u64 {
         let pruned_unneeded_chunks: HashSet<_> = self.unneeded_chunks
             .iter()
-            .filter(|data_id| routing_table.is_close(data_id.name(), GROUP_SIZE))
+            .filter(|data_id| kad::is_close(routing_table, data_id.name()))
             .cloned()
             .collect();
         if !pruned_unneeded_chunks.is_empty() {
@@ -185,7 +185,7 @@ impl Cache {
                 .filter(|&&(ref data_id, _)| {
                     // The data needs to be removed if either we are not close to it anymore, i. e.
                     // other_close_nodes returns None, or `holder` is not in it anymore.
-                    routing_table.other_close_nodes(data_id.name(), GROUP_SIZE)
+                    kad::other_close_nodes(routing_table, data_id.name())
                         .map_or(true, |group| !group.contains(holder))
                 })
                 .cloned()
@@ -208,7 +208,7 @@ impl Cache {
         let lost_gets = self.ongoing_gets
             .iter()
             .filter(|&(holder, &(_, (ref data_id, _)))| {
-                routing_table.other_close_nodes(data_id.name(), GROUP_SIZE)
+                kad::other_close_nodes(routing_table, data_id.name())
                     .map_or(true, |group| !group.contains(holder))
             })
             .map(|(holder, _)| *holder)
@@ -359,11 +359,11 @@ pub struct DataManager {
 fn id_and_version_of(data: &Data) -> IdAndVersion {
     (data.identifier(),
      match *data {
-        Data::Structured(ref sd) => sd.get_version(),
-        Data::PubAppendable(ref ad) => ad.get_version(),
-        Data::PrivAppendable(ref ad) => ad.get_version(),
-        Data::Immutable(_) => 0,
-    })
+         Data::Structured(ref sd) => sd.get_version(),
+         Data::PubAppendable(ref ad) => ad.get_version(),
+         Data::PrivAppendable(ref ad) => ad.get_version(),
+         Data::Immutable(_) => 0,
+     })
 }
 
 impl Debug for DataManager {
@@ -782,8 +782,9 @@ impl DataManager {
     pub fn handle_group_refresh(&mut self, serialised_refresh: &[u8]) -> Result<(), InternalError> {
         let RefreshData((data_id, version), refresh_hash) =
             serialisation::deserialise(serialised_refresh)?;
-        for PendingWrite { data, mutate_type, src, dst, message_id, hash, .. } in self.cache
-            .take_pending_writes(&data_id) {
+        for PendingWrite { data, mutate_type, src, dst, message_id, hash, .. } in
+            self.cache
+                .take_pending_writes(&data_id) {
             if hash == refresh_hash {
                 let already_existed = self.chunk_store.has(&data_id);
                 if let Err(error) = self.chunk_store.put(&data_id, &data) {
@@ -865,16 +866,18 @@ impl DataManager {
                              dst: Authority,
                              message_id: MessageId)
                              -> Result<(), InternalError> {
-        for PendingWrite { mutate_type, src, dst, data, message_id, .. } in self.cache
-            .remove_expired_writes() {
+        for PendingWrite { mutate_type, src, dst, data, message_id, .. } in
+            self.cache
+                .remove_expired_writes() {
             let data_id = data.identifier();
             let error = MutationError::NetworkOther("Request expired.".to_owned());
             trace!("{:?} did not accumulate. Sending failure", data_id);
             self.send_failure(mutate_type, src, dst, data_id, message_id, error)?;
         }
         let data_name = *data.name();
-        if let Some(refresh_data) = self.cache
-            .insert_pending_write(data, mutate_type, src, dst, message_id) {
+        if let Some(refresh_data) =
+            self.cache
+                .insert_pending_write(data, mutate_type, src, dst, message_id) {
             let _ = self.send_group_refresh(data_name, refresh_data, message_id);
         }
         Ok(())
@@ -920,7 +923,7 @@ impl DataManager {
         // Only retain data for which we're still in the close group.
         let mut data_list = Vec::new();
         for (data_id, version) in data_idvs {
-            match routing_table.other_close_nodes(data_id.name(), GROUP_SIZE) {
+            match kad::other_close_nodes(routing_table, data_id.name()) {
                 None => {
                     trace!("No longer a DM for {:?}", data_id);
                     if self.chunk_store.has(&data_id) && !self.cache.is_in_unneeded(&data_id) {
@@ -974,17 +977,17 @@ impl DataManager {
             .collect_vec());
         let mut data_lists: HashMap<XorName, Vec<IdAndVersion>> = HashMap::new();
         for data_idv in data_idvs {
-            match routing_table.other_close_nodes(data_idv.0.name(), GROUP_SIZE) {
+            match kad::other_close_nodes(routing_table, data_idv.0.name()) {
                 None => {
                     error!("Moved out of close group of {:?} in a NodeLost event!",
                            node_name);
                 }
                 Some(close_group) => {
                     // If no new node joined the group due to this event, continue:
-                    // If the group has fewer than GROUP_SIZE elements, the lost node was not
+                    // If the group has fewer than MIN_GROUP_SIZE elements, the lost node was not
                     // replaced at all. Otherwise, if the group's last node is closer to the data
                     // than the lost node, the lost node was not in the group in the first place.
-                    if let Some(outer_node) = close_group.get(GROUP_SIZE - 2) {
+                    if let Some(outer_node) = close_group.get(MIN_GROUP_SIZE - 2) {
                         if data_idv.0.name().closer(node_name, outer_node) {
                             data_lists.entry(*outer_node).or_insert_with(Vec::new).push(data_idv);
                         }
