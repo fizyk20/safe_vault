@@ -19,6 +19,7 @@
 use cache::Cache;
 use config_handler::{self, Config};
 use error::InternalError;
+use kad;
 use personas::data_manager::DataManager;
 #[cfg(feature = "use-mock-crust")]
 use personas::data_manager::IdAndVersion;
@@ -208,6 +209,9 @@ impl Vault {
                   src: Authority,
                   dst: Authority)
                   -> Result<(), InternalError> {
+        if !kad::is_close(&unwrap!(self._routing_node.routing_table()), dst.name()) {
+            return Ok(());
+        }
         match (src, dst, request) {
             // ================== Get ==================
             (src @ Authority::Client { .. },
@@ -276,6 +280,9 @@ impl Vault {
                    src: Authority,
                    dst: Authority)
                    -> Result<(), InternalError> {
+        if !kad::is_close(&unwrap!(self._routing_node.routing_table()), dst.name()) {
+            return Ok(());
+        }
         match (src, dst, response) {
             // ================== GetSuccess ==================
             (Authority::ManagedNode(src_name),
