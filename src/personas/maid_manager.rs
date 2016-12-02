@@ -100,6 +100,10 @@ impl MaidManager {
                       data: Data,
                       msg_id: MessageId)
                       -> Result<(), InternalError> {
+        trace!("{:?} Handling put from {:?} to {:?}",
+               self.routing_node.clone().name(),
+               src,
+               dst);
         if !data.validate_size() {
             return self.reply_with_put_failure(src,
                                                dst,

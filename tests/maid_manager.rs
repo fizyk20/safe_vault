@@ -19,6 +19,7 @@
 // https://github.com/maidsafe/QA/blob/master/Documentation/Rust%20Lint%20Checks.md
 
 use itertools::Itertools;
+use maidsafe_utilities;
 use rand::Rng;
 use rand::distributions::{IndependentSample, Range};
 use routing::{Data, ImmutableData, MIN_GROUP_SIZE, StructuredData, TYPE_TAG_SESSION_PACKET,
@@ -254,7 +255,8 @@ fn storing_till_client_account_full() {
 
 #[test]
 fn maid_manager_account_adding_with_churn() {
-    let network = Network::new(None);
+    let _ = maidsafe_utilities::log::init(false);
+    let network = Network::new(Some([1567899085, 4153474355, 1199912835, 3262983938]));
     let node_count = 15;
     let mut nodes = test_node::create_nodes(&network, node_count, None, false);
     let config = mock_crust::Config::with_contacts(&[nodes[0].endpoint()]);
@@ -302,7 +304,11 @@ fn maid_manager_account_adding_with_churn() {
             .map(|x| (x.name(), x.get_maid_manager_put_count(client.name())))
             .collect();
         for &(_, count) in &node_count_stats {
-            assert!(count == Some(put_count), "{:?}", node_count_stats);
+            assert!(count == Some(put_count),
+                    "count = {:?} != Some(put_count) = {:?}: {:?}",
+                    count,
+                    Some(put_count),
+                    node_count_stats);
         }
         mock_crust_detail::verify_kademlia_invariant_for_all_nodes(&nodes);
     }
